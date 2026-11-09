@@ -1,0 +1,861 @@
+
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<style>
+:root { color-scheme: light dark; }
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: ui-sans-serif, system-ui, -apple-system,
+    BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: transparent;
+}
+
+.composer {
+  border: 1px solid var(--border, #d9d9e3);
+  border-radius: 26px;
+  padding: 10px 12px;
+  background: var(--surface, #fff);
+  box-shadow: 0 3px 12px rgba(0,0,0,.06);
+}
+
+textarea {
+  display: block;
+  width: 100%;
+  min-height: 35px;
+  max-height: 160px;
+  resize: vertical;
+  border: 0 !important;
+  outline: none !important;
+  box-shadow: none !important;
+  background: transparent;
+  color: var(--text, #202123);
+  font: inherit;
+  font-size: 16px;
+  line-height: 1.45;
+  padding: 5px 6px 8px;
+}
+
+textarea::placeholder { color: var(--muted, #777); }
+
+.bottom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+button {
+  border: 0;
+  outline: none;
+  box-shadow: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  width: 38px;
+  height: 38px;
+  color: var(--text, #202123);
+  background: transparent;
+  flex-shrink: 0;
+}
+
+button:hover { background: var(--hover, #f0f0f0); }
+
+button.send {
+  color: #fff;
+  background: #202123;
+}
+
+button.send:disabled {
+  color: #8c8c8c;
+  background: #e5e5e5;
+  cursor: default;
+}
+
+button.recording {
+  background: #d92d20;
+  color: white;
+}
+
+button:disabled { cursor: not-allowed; opacity: .7; }
+
+svg {
+  width: 21px;
+  height: 21px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+#fileInput { display: none; }
+
+.filelist {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 2px 5px 8px;
+}
+
+.filechip {
+  font-size: 12px;
+  padding: 5px 9px;
+  border-radius: 12px;
+  background: var(--chip, #f1f1f1);
+  color: var(--text, #202123);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status {
+  font-size: 12px;
+  color: var(--muted, #777);
+  padding: 4px 8px 0;
+  min-height: 16px;
+  overflow-wrap: anywhere;
+}
+
+.meter {
+  height: 4px;
+  width: 100%;
+  margin: 5px 0 0;
+  border-radius: 4px;
+  overflow: hidden;
+  background: rgba(128,128,128,.18);
+}
+
+.meter-fill {
+  height: 100%;
+  width: 0%;
+  background: #16a34a;
+  transition: width .08s linear;
+}
+
+.hint {
+  font-size: 11px;
+  color: var(--muted, #777);
+  text-align: center;
+  padding-top: 5px;
+}
+</style>
+</head>
+
+<body>
+<div class="composer" role="group" aria-label="SmartAI message composer">
+
+  <div id="filelist" class="filelist" hidden></div>
+
+  <textarea
+    id="message"
+    rows="1"
+    placeholder="Message SmartAI..."
+    aria-label="Message SmartAI"
+  ></textarea>
+
+  <div class="bottom">
+    <div class="left">
+
+      <button id="attach" type="button"
+        title="Attach PDF" aria-label="Attach PDF">
+        <svg viewBox="0 0 24 24">
+          <path d="M12 5v14M5 12h14"/>
+        </svg>
+      </button>
+
+      <button id="mic" type="button"
+        title="Start voice recording" aria-label="Start voice recording">
+        <svg viewBox="0 0 24 24">
+          <rect x="9" y="3" width="6" height="12" rx="3"/>
+          <path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6"/>
+        </svg>
+      </button>
+
+      <span id="status" class="status" aria-live="polite"></span>
+    </div>
+
+    <button id="send" class="send" type="button"
+      title="Send message" aria-label="Send message" disabled>
+      <svg viewBox="0 0 24 24">
+        <path d="M12 19V5M6 11l6-6 6 6"/>
+      </svg>
+    </button>
+  </div>
+
+  <div id="meter" class="meter" hidden>
+    <div id="meterFill" class="meter-fill"></div>
+  </div>
+
+  <input id="fileInput" type="file"
+    accept=".pdf,application/pdf" multiple>
+</div>
+
+<div class="hint">
+  ＋ Attach PDF · 🎙 Record voice · Enter to send · Shift+Enter for a new line
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  const message = document.getElementById("message");
+  const attach = document.getElementById("attach");
+  const mic = document.getElementById("mic");
+  const send = document.getElementById("send");
+  const fileInput = document.getElementById("fileInput");
+  const filelist = document.getElementById("filelist");
+  const status = document.getElementById("status");
+  const meter = document.getElementById("meter");
+  const meterFill = document.getElementById("meterFill");
+
+  let files = [];
+  let recorder = null;
+  let audioChunks = [];
+  let audioBlob = null;
+  let isRecording = false;
+  let isSubmitting = false;
+  let voiceLanguage = "Auto";
+  let activeStream = null;
+  let audioContext = null;
+  let analyser = null;
+  let meterAnimation = null;
+  let soundDetected = false;
+  let recordingStartedAt = 0;
+  let speechRecognition = null;
+  let liveSpeechBaseText = "";
+  let liveFinalTranscript = "";
+  let sendAfterRecordingStops = false;
+
+  function streamlitMessage(type, extra) {
+    window.parent.postMessage(
+      Object.assign({
+        isStreamlitMessage: true,
+        type: type
+      }, extra || {}),
+      "*"
+    );
+  }
+
+  function setHeight() {
+    streamlitMessage("streamlit:setFrameHeight", {
+      height: document.body.scrollHeight
+    });
+  }
+
+  function sendValue(value) {
+    streamlitMessage("streamlit:setComponentValue", {
+      value: value,
+      dataType: "json"
+    });
+  }
+
+  function renderFiles() {
+    filelist.innerHTML = "";
+    filelist.hidden = files.length === 0;
+
+    files.forEach((file, index) => {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "filechip";
+      chip.textContent = "📄 " + file.name + " ×";
+      chip.title = "Click to remove " + file.name;
+      chip.style.width = "auto";
+      chip.style.height = "auto";
+      chip.style.borderRadius = "12px";
+
+      chip.onclick = () => {
+        files.splice(index, 1);
+        renderFiles();
+        updateSend();
+      };
+
+      filelist.appendChild(chip);
+    });
+
+    setHeight();
+  }
+
+  function updateSend() {
+    send.disabled = isSubmitting ||
+      isRecording ||
+      !(message.value.trim() || files.length || audioBlob);
+  }
+
+  function toBase64(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+
+      reader.onload = () => {
+        resolve(String(reader.result).split(",")[1] || "");
+      };
+
+      reader.onerror = () => reject(
+        new Error("Could not read recorded audio or attached file.")
+      );
+
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  function supportedAudioMime() {
+    if (!window.MediaRecorder ||
+        typeof MediaRecorder.isTypeSupported !== "function") {
+      return "";
+    }
+
+    const types = [
+      "audio/webm;codecs=opus",
+      "audio/webm",
+      "audio/mp4",
+      "audio/ogg;codecs=opus"
+    ];
+
+    return types.find(type => MediaRecorder.isTypeSupported(type)) || "";
+  }
+
+  function stopMeter() {
+    if (meterAnimation !== null) {
+      cancelAnimationFrame(meterAnimation);
+      meterAnimation = null;
+    }
+
+    meter.hidden = true;
+    meterFill.style.width = "0%";
+
+    if (audioContext) {
+      const oldContext = audioContext;
+      audioContext = null;
+      analyser = null;
+
+      oldContext.close().catch(() => {});
+    }
+  }
+
+  function startMeter(stream) {
+    const AudioContextClass =
+      window.AudioContext || window.webkitAudioContext;
+
+    if (!AudioContextClass) {
+      status.textContent =
+        "Recording started. Audio level display is unavailable.";
+      return;
+    }
+
+    try {
+      audioContext = new AudioContextClass();
+      const source = audioContext.createMediaStreamSource(stream);
+
+      analyser = audioContext.createAnalyser();
+      analyser.fftSize = 1024;
+      source.connect(analyser);
+
+      const samples = new Uint8Array(analyser.fftSize);
+      meter.hidden = false;
+
+      function drawLevel() {
+        if (!isRecording || !analyser) return;
+
+        analyser.getByteTimeDomainData(samples);
+
+        let sum = 0;
+
+        for (let i = 0; i < samples.length; i++) {
+          const value = (samples[i] - 128) / 128;
+          sum += value * value;
+        }
+
+        const rms = Math.sqrt(sum / samples.length);
+        const level = Math.min(100, Math.round(rms * 350));
+
+        meterFill.style.width = level + "%";
+
+        if (rms > 0.018) {
+          soundDetected = true;
+          status.textContent = "Recording — microphone is receiving sound.";
+        }
+
+        meterAnimation = requestAnimationFrame(drawLevel);
+      }
+
+      audioContext.resume().then(() => {
+        if (isRecording) drawLevel();
+      }).catch(() => {
+        status.textContent =
+          "Recording, but the sound-level monitor could not start.";
+      });
+
+    } catch (error) {
+      status.textContent =
+        "Recording started, but the sound-level monitor is unavailable.";
+    }
+  }
+
+  function stopTracks() {
+    if (activeStream) {
+      activeStream.getTracks().forEach(track => {
+        try {
+          track.stop();
+        } catch (_) {}
+      });
+      activeStream = null;
+    }
+  }
+
+  attach.addEventListener("click", () => {
+    fileInput.click();
+  });
+
+  fileInput.addEventListener("change", () => {
+    Array.from(fileInput.files || []).forEach(file => {
+      if (!file.name.toLowerCase().endsWith(".pdf")) {
+        status.textContent = "Please attach PDF files only.";
+      } else if (file.size > 25 * 1024 * 1024) {
+        status.textContent = file.name + " exceeds the 25 MB limit.";
+      } else if (!files.some(existing =>
+        existing.name === file.name && existing.size === file.size)) {
+        files.push(file);
+        status.textContent = "";
+      }
+    });
+
+    fileInput.value = "";
+    renderFiles();
+    updateSend();
+  });
+
+  message.addEventListener("input", updateSend);
+
+  message.addEventListener("keydown", event => {
+    if (event.key !== "Enter" || event.shiftKey || event.isComposing) {
+      return;
+    }
+
+    // Enter means Send. Shift+Enter keeps its normal newline behaviour.
+    // If recognition is still active, stop it and send after final results arrive.
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (isSubmitting) return;
+
+    if (isRecording && speechRecognition) {
+      sendAfterRecordingStops = true;
+      status.textContent = "Finishing speech recognition, then sending…";
+      stopLiveSpeech();
+      return;
+    }
+
+    if (isRecording && recorder && recorder.state !== "inactive") {
+      sendAfterRecordingStops = true;
+      status.textContent = "Finishing recording, then sending…";
+      try {
+        recorder.stop();
+      } catch (error) {
+        sendAfterRecordingStops = false;
+        status.textContent = "Could not stop recording: " + error.message;
+      }
+      return;
+    }
+
+    if (!send.disabled) submit();
+  }, true);
+
+  function getSpeechRecognitionClass() {
+    return window.SpeechRecognition || window.webkitSpeechRecognition || null;
+  }
+
+  function stopLiveSpeech() {
+    if (speechRecognition && isRecording) {
+      status.textContent = "Finishing speech recognition…";
+      try {
+        speechRecognition.stop();
+      } catch (error) {
+        status.textContent = "Could not stop listening: " + error.message;
+      }
+    }
+  }
+
+  function startLiveSpeech() {
+    const SpeechRecognitionClass = getSpeechRecognitionClass();
+    if (!SpeechRecognitionClass) return false;
+
+    audioBlob = null;
+    liveSpeechBaseText = message.value.trim();
+    liveFinalTranscript = "";
+    speechRecognition = new SpeechRecognitionClass();
+    speechRecognition.continuous = true;
+    speechRecognition.interimResults = true;
+    speechRecognition.maxAlternatives = 1;
+
+    // The language selector in the Streamlit sidebar controls recognition.
+    if (voiceLanguage === "Tamil") {
+      speechRecognition.lang = "ta-IN";
+    } else if (voiceLanguage === "English") {
+      speechRecognition.lang = "en-IN";
+    } else {
+      // Auto uses Indian English as the browser API requires a language hint.
+      speechRecognition.lang = "en-IN";
+    }
+
+    speechRecognition.onstart = () => {
+      isRecording = true;
+      mic.classList.add("recording");
+      mic.title = "Stop listening";
+      mic.setAttribute("aria-label", "Stop listening");
+      status.textContent = "Listening… start speaking. Your words will appear here.";
+      updateSend();
+      setHeight();
+    };
+
+    speechRecognition.onresult = event => {
+      let interimTranscript = "";
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          liveFinalTranscript += transcript;
+        } else {
+          interimTranscript += transcript;
+        }
+      }
+
+      const spokenText = (liveFinalTranscript + interimTranscript).trim();
+      message.value = liveSpeechBaseText
+        ? liveSpeechBaseText + (spokenText ? " " + spokenText : "")
+        : spokenText;
+      message.dispatchEvent(new Event("input", { bubbles: true }));
+      status.textContent = interimTranscript
+        ? "Listening… " + interimTranscript
+        : "Speech recognised. Keep speaking or click the microphone to stop.";
+      setHeight();
+    };
+
+    speechRecognition.onerror = event => {
+      const messages = {
+        "not-allowed": "Microphone permission is blocked. Allow microphone access for localhost in Edge settings.",
+        "service-not-allowed": "Browser speech recognition is not allowed. Check Edge microphone/privacy settings.",
+        "no-speech": "No speech detected yet. Try speaking closer to the microphone.",
+        "audio-capture": "No microphone is available. Check Windows input-device settings.",
+        "network": "Live speech recognition needs an internet connection."
+      };
+      status.textContent = messages[event.error] || ("Speech recognition error: " + event.error);
+    };
+
+    speechRecognition.onend = () => {
+      isRecording = false;
+      mic.classList.remove("recording");
+      mic.title = "Start live voice input";
+      mic.setAttribute("aria-label", "Start live voice input");
+      const hasText = message.value.trim().length > 0;
+      if (hasText) {
+        status.textContent = "Stopped listening. Check the recognised text, edit if needed, then click Send.";
+      } else if (!status.textContent.startsWith("Microphone") && !status.textContent.startsWith("Live speech")) {
+        status.textContent = "Listening stopped. No words were recognised; please try again.";
+      }
+      speechRecognition = null;
+      updateSend();
+      setHeight();
+
+      if (sendAfterRecordingStops) {
+        sendAfterRecordingStops = false;
+        if (message.value.trim()) {
+          submit();
+        } else {
+          status.textContent = "No recognised words to send. Please try speaking again.";
+        }
+      }
+    };
+
+    try {
+      speechRecognition.start();
+      return true;
+    } catch (error) {
+      speechRecognition = null;
+      status.textContent = "Could not start live speech recognition: " + error.message;
+      return false;
+    }
+  }
+
+  mic.addEventListener("click", async () => {
+    if (isRecording && speechRecognition) {
+      stopLiveSpeech();
+      return;
+    }
+
+    if (isRecording && recorder) {
+      status.textContent = "Finishing recording…";
+
+      try {
+        recorder.stop();
+      } catch (error) {
+        status.textContent =
+          "Could not stop recording: " + error.message;
+      }
+
+      return;
+    }
+
+    if (isSubmitting) return;
+
+    // Prefer live browser speech-to-text so recognised words appear while
+    // the user is speaking. Keep MediaRecorder as a fallback for browsers
+    // that do not expose the Web Speech API.
+    if (startLiveSpeech()) {
+      return;
+    }
+
+    if (!navigator.mediaDevices ||
+        !navigator.mediaDevices.getUserMedia ||
+        !window.MediaRecorder) {
+      status.textContent =
+        "Recording is unsupported here. Use a recent Edge or Chrome browser on localhost.";
+      return;
+    }
+
+    audioBlob = null;
+    audioChunks = [];
+    soundDetected = false;
+    status.textContent = "Requesting microphone permission…";
+    updateSend();
+
+    try {
+      activeStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      });
+
+      const tracks = activeStream.getAudioTracks();
+
+      if (!tracks.length) {
+        throw new Error("No audio input track was found.");
+      }
+
+      const track = tracks[0];
+
+      if (track.readyState !== "live") {
+        throw new Error("The microphone track is not active.");
+      }
+
+      track.addEventListener("ended", () => {
+        if (isRecording && recorder &&
+            recorder.state !== "inactive") {
+          status.textContent = "Microphone disconnected.";
+          recorder.stop();
+        }
+      });
+
+      const mimeType = supportedAudioMime();
+
+      recorder = mimeType
+        ? new MediaRecorder(activeStream, { mimeType: mimeType })
+        : new MediaRecorder(activeStream);
+
+      recorder.ondataavailable = event => {
+        if (event.data && event.data.size > 0) {
+          audioChunks.push(event.data);
+        }
+      };
+
+      recorder.onerror = event => {
+        const error = event.error;
+        status.textContent =
+          "Recording error: " +
+          (error && error.message ? error.message : "unknown error");
+      };
+
+      recorder.onstop = () => {
+        const actualMime = recorder.mimeType || mimeType || "audio/webm";
+
+        audioBlob = audioChunks.length
+          ? new Blob(audioChunks, { type: actualMime })
+          : null;
+
+        stopTracks();
+        stopMeter();
+
+        isRecording = false;
+        mic.classList.remove("recording");
+        mic.title = "Start voice recording";
+        mic.setAttribute("aria-label", "Start voice recording");
+
+        if (!audioBlob || audioBlob.size === 0) {
+          status.textContent =
+            "No audio data was captured. Check the selected microphone and try again.";
+          audioBlob = null;
+        } else if (!soundDetected) {
+          status.textContent =
+            "Audio was saved, but no clear sound was detected. Check your microphone volume and try again if needed.";
+        } else {
+          status.textContent =
+            "Voice recorded (" +
+            Math.round(audioBlob.size / 1024) +
+            " KB). Click Send to submit.";
+        }
+
+        updateSend();
+        setHeight();
+
+        if (sendAfterRecordingStops) {
+          sendAfterRecordingStops = false;
+          if (audioBlob && audioBlob.size > 0) {
+            submit();
+          } else {
+            status.textContent = "No audio was captured. Please try recording again.";
+          }
+        }
+      };
+
+      recordingStartedAt = Date.now();
+      recorder.start(250);
+
+      isRecording = true;
+      mic.classList.add("recording");
+      mic.title = "Stop voice recording";
+      mic.setAttribute("aria-label", "Stop voice recording");
+      status.textContent =
+        "Recording — speak now. Click the red microphone to stop.";
+
+      startMeter(activeStream);
+      updateSend();
+      setHeight();
+
+    } catch (error) {
+      stopTracks();
+      stopMeter();
+
+      isRecording = false;
+      mic.classList.remove("recording");
+      mic.title = "Start voice recording";
+
+      let messageText = error && error.message
+        ? error.message
+        : "Unknown microphone error.";
+
+      if (error && error.name === "NotAllowedError") {
+        messageText =
+          "Microphone permission was denied. Allow microphone access in Edge site settings.";
+      } else if (error && error.name === "NotFoundError") {
+        messageText =
+          "No microphone was found. Connect or select a microphone in Windows Sound Settings.";
+      } else if (error && error.name === "NotReadableError") {
+        messageText =
+          "The microphone is busy or unavailable. Close other apps using it and try again.";
+      } else if (error && error.name === "OverconstrainedError") {
+        messageText =
+          "The selected microphone does not support the requested settings. Check Windows Sound Settings.";
+      }
+
+      status.textContent = "Microphone error: " + messageText;
+      updateSend();
+      setHeight();
+    }
+  });
+
+  async function submit() {
+    if (isSubmitting || isRecording) return;
+
+    if (!(message.value.trim() || files.length || audioBlob)) {
+      status.textContent = "Type a message, attach a PDF, or record voice first.";
+      return;
+    }
+
+    isSubmitting = true;
+    updateSend();
+    status.textContent = "Preparing message…";
+
+    try {
+      const filePayloads = [];
+
+      for (const file of files) {
+        filePayloads.push({
+          name: file.name,
+          type: file.type || "application/pdf",
+          data: await toBase64(file)
+        });
+      }
+
+      let audioPayload = null;
+
+      if (audioBlob && audioBlob.size > 0) {
+        audioPayload = {
+          type: audioBlob.type || "audio/webm",
+          data: await toBase64(audioBlob)
+        };
+      }
+
+      const text = message.value.trim();
+
+      sendValue({
+        id: Date.now().toString() + "-" +
+          Math.random().toString(36).slice(2),
+        text: text,
+        files: filePayloads,
+        audio: audioPayload,
+        voice_language: voiceLanguage
+      });
+
+      message.value = "";
+      files = [];
+      audioBlob = null;
+
+      renderFiles();
+      status.textContent = "Sent to SmartAI.";
+    } catch (error) {
+      status.textContent =
+        "Could not prepare your message: " +
+        (error && error.message ? error.message : "unknown error");
+    } finally {
+      isSubmitting = false;
+      updateSend();
+      setHeight();
+    }
+  }
+
+  send.addEventListener("click", () => {
+    if (!send.disabled) submit();
+  });
+
+  window.addEventListener("message", event => {
+    const data = event.data || {};
+
+    if (data.type === "streamlit:render" && data.args) {
+      if (data.args.placeholder) {
+        message.placeholder = data.args.placeholder;
+      }
+
+      if (data.args.voice_language) {
+        voiceLanguage = data.args.voice_language;
+      }
+
+      setHeight();
+    }
+  });
+
+  streamlitMessage("streamlit:componentReady", {
+    apiVersion: 1
+  });
+
+  setHeight();
+  updateSend();
+})();
+</script>
+</body>
+</html>
